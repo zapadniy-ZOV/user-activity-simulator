@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -122,9 +123,38 @@ func handleGetUser(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := pathParts[1]
 
-	log.Printf("GET /user/%s request", userID)
+	// Parse min and max query parameters
+	minPercentStr := r.URL.Query().Get("min")
+	maxPercentStr := r.URL.Query().Get("max")
 
-	userData, err := ReadLocationData(userID)
+	minPercent := 0.0
+	maxPercent := 1.0
+	var err error
+
+	if minPercentStr != "" {
+		minPercent, err = strconv.ParseFloat(minPercentStr, 64)
+		if err != nil || minPercent < 0.0 || minPercent > 1.0 {
+			http.Error(w, "Invalid 'min' parameter. Must be a float between 0.0 and 1.0.", http.StatusBadRequest)
+			return
+		}
+	}
+
+	if maxPercentStr != "" {
+		maxPercent, err = strconv.ParseFloat(maxPercentStr, 64)
+		if err != nil || maxPercent < 0.0 || maxPercent > 1.0 {
+			http.Error(w, "Invalid 'max' parameter. Must be a float between 0.0 and 1.0.", http.StatusBadRequest)
+			return
+		}
+	}
+
+	if minPercent > maxPercent {
+		http.Error(w, "'min' parameter cannot be greater than 'max' parameter.", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("GET /user/%s request with min=%.2f, max=%.2f", userID, minPercent, maxPercent)
+
+	userData, err := ReadLocationData(userID, minPercent, maxPercent)
 	if err != nil {
 		log.Printf("Error reading data for user %s: %v", userID, err)
 		http.Error(w, fmt.Sprintf("Failed to retrieve data for user %s: %v", userID, err), http.StatusInternalServerError)
@@ -132,7 +162,9 @@ func handleGetUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(userData) == 0 {
-		http.Error(w, fmt.Sprintf("No data found for user %s", userID), http.StatusNotFound)
+		// Check if the original range might have filtered out all data, or if user truly has no data
+		// For simplicity, we'll return Not Found. A more sophisticated check could query without percentages first.
+		http.Error(w, fmt.Sprintf("No data found for user %s within the specified range", userID), http.StatusNotFound)
 		return
 	}
 

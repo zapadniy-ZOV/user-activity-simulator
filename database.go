@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 
 	"github.com/unit-io/unitdb"
 )
@@ -61,9 +62,9 @@ func WriteLocationData(userID string, dataPoints []LocationData) error {
 	})
 }
 
-// ReadLocationData retrieves all location data for a specific user.
-// It reads all messages for the user's topic.
-func ReadLocationData(userID string) ([]LocationData, error) {
+// ReadLocationData retrieves location data for a specific user, with optional percentage-based slicing.
+// minPercent and maxPercent range from 0.0 to 1.0.
+func ReadLocationData(userID string, minPercent, maxPercent float64) ([]LocationData, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database not initialized")
 	}
@@ -72,7 +73,6 @@ func ReadLocationData(userID string) ([]LocationData, error) {
 
 	rawMessages, err := db.Get(query)
 	if err != nil {
-		// If there's any error during retrieval, return it.
 		return nil, fmt.Errorf("failed to get data for user %s from DB: %w", userID, err)
 	}
 
@@ -90,5 +90,41 @@ func ReadLocationData(userID string) ([]LocationData, error) {
 		locationDataList = append(locationDataList, data)
 	}
 
-	return locationDataList, nil
+	// Sort data by timestamp (oldest to newest)
+	sort.Slice(locationDataList, func(i, j int) bool {
+		return locationDataList[i].Timestamp.Before(locationDataList[j].Timestamp)
+	})
+
+	// Apply percentage-based slicing
+	totalEntries := len(locationDataList)
+	if totalEntries == 0 {
+		return []LocationData{}, nil
+	}
+
+	// Validate and clamp percentages
+	if minPercent < 0.0 {
+		minPercent = 0.0
+	}
+	if maxPercent > 1.0 {
+		maxPercent = 1.0
+	}
+	if minPercent > maxPercent {
+		minPercent = maxPercent // Or handle as an error, for now, clamp
+	}
+
+	startIndex := int(minPercent * float64(totalEntries))
+	endIndex := int(maxPercent * float64(totalEntries))
+
+	// Ensure indices are within bounds
+	if startIndex < 0 {
+		startIndex = 0
+	}
+	if endIndex > totalEntries {
+		endIndex = totalEntries
+	}
+	if startIndex > endIndex {
+		startIndex = endIndex
+	}
+
+	return locationDataList[startIndex:endIndex], nil
 }
