@@ -5,11 +5,15 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"sync"
 
 	"github.com/unit-io/unitdb"
 )
 
-var db *unitdb.DB
+var (
+	db         *unitdb.DB
+	writeMutex sync.Mutex
+)
 
 // InitDB initializes the unitdb database connection.
 func InitDB(dbPath string) error {
@@ -42,7 +46,13 @@ func WriteLocationData(userID string, dataPoints []LocationData) error {
 	if db == nil {
 		return fmt.Errorf("database not initialized")
 	}
+	if len(dataPoints) == 0 {
+		return nil
+	}
 	topic := GetTopicForUser(userID)
+
+	writeMutex.Lock()
+	defer writeMutex.Unlock()
 
 	return db.Batch(func(b *unitdb.Batch, completed <-chan struct{}) error {
 		entry := unitdb.NewEntry(topic, nil)
@@ -71,7 +81,10 @@ func ReadLocationData(userID string, minPercent, maxPercent float64) ([]Location
 	topic := GetTopicForUser(userID)
 	query := unitdb.NewQuery(topic)
 
+	writeMutex.Lock() // Lock before reading
 	rawMessages, err := db.Get(query)
+	writeMutex.Unlock() // Unlock after reading
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to get data for user %s from DB: %w", userID, err)
 	}
